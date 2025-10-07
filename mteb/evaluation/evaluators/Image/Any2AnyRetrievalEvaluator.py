@@ -283,6 +283,43 @@ class Any2AnyDenseRetrievalExactSearch:
         return previous_results
 
 
+class Any2AnyPipelineRetrievalExactSearch(Any2AnyDenseRetrievalExactSearch):
+    """Pipeline retrieval for any-to-any tasks. Allows for more complex retrieval strategies
+    that may involve multiple modalities and steps. The model must implement the `pipeline_search` method.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def search(
+        self,
+        corpus: Dataset,  # solve memoery issues
+        queries: Dataset,  # solve memoery issues
+        top_k: int,
+        task_name: str,
+        return_sorted: bool = False,
+        **kwargs,
+    ) -> dict[str, dict[str, float]]:
+        if not hasattr(self.model, "pipeline_search"):
+            raise ValueError(
+                "For pipeline tasks, the model must implement the `pipeline_search` method."
+            )
+
+        logger.info("Executing pipeline search...")
+
+        self.results = self.model.pipeline_search(
+            corpus=corpus,
+            queries=queries,
+            task_name=task_name,
+            top_k=top_k,
+            return_sorted=return_sorted,
+            **self.encode_kwargs,
+            **kwargs,
+        )
+
+        return self.results
+
+
 # Adapted from https://github.com/beir-cellar/beir/blob/f062f038c4bfd19a8ca942a9910b1e0d218759d4/beir/retrieval/evaluation.py#L9
 class Any2AnyRetrievalEvaluator(Evaluator):
     def __init__(
@@ -292,19 +329,26 @@ class Any2AnyRetrievalEvaluator(Evaluator):
         k_values: list[int] = [1, 3, 5, 10, 20, 100, 1000],
         score_function: str = "cos_sim",
         encode_kwargs: dict[str, Any] = {},
+        is_pipeline_task: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
-        self.retriever = Any2AnyDenseRetrievalExactSearch(
-            retriever, encode_kwargs=encode_kwargs, **kwargs
-        )
+        if not is_pipeline_task:
+            self.retriever = Any2AnyDenseRetrievalExactSearch(
+                retriever, encode_kwargs=encode_kwargs, **kwargs
+            )
+        else:
+            self.retriever = Any2AnyPipelineRetrievalExactSearch(
+                retriever, encode_kwargs=encode_kwargs, **kwargs
+            )
         self.k_values = k_values
         self.top_k = (
             max(k_values) if "top_k" not in kwargs else kwargs["top_k"]
         )  # can lower it if reranking
         self.score_function = score_function
         self.task_name = task_name
+        self.is_pipeline_task = is_pipeline_task
 
     def __call__(
         self,
